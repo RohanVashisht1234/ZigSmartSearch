@@ -200,12 +200,6 @@ Document title: Zig Clib, score: 152, matched: [bind, library, connect, zig]
 
 ---
 
-## 📜 License
-
-MIT License. Free for personal or commercial use.
-
----
-
 ## 🤝 Contribute
 
 Open to improvements! Ideas for future features:
