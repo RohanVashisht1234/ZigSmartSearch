@@ -177,12 +177,6 @@ Top Matches:
      Simplified bindings for Zig interoperability
 ```
 
-**Debug Output (stderr):**
-
-```
-Document title: Zig Clib, score: 152, matched: [bind, library, connect, zig]
-```
-
 ---
 
 ## 💡 Use Cases
