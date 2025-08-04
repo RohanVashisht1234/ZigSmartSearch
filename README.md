@@ -205,3 +205,9 @@ PRs and issues are welcome → [ZigSmartSearch GitHub Repo](https://github.com/R
 
 Submit issues or feature requests via [GitHub Issues](https://github.com/RohanVashisht1234/ZigSmartSearch/issues).
 Join the Zig community to share ideas and get support!
+
+## Special mention:
+
+[lemmatize.tsv](./src/libs/data/lemmatize.tsv) was origionally taken from https://github.com/iskander-akhmetov/Highly-Language-Independent-Word-Lemmatization-Using-a-Machine-Learning-Classifier/blob/master/DS_lemm/lemmatization-en.txt
+
+[simplified_dictionary.json](./src/libs/data/simplified_dictionary.json) was origionally taken from https://github.com/wordset/wordset-dictionary/blob/master/allwords_wordset.json.gz
