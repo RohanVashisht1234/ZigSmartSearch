@@ -161,14 +161,6 @@ pub fn main() !void {
 
 For testing, you can download [database.json](./example/database.json) inside your src folder.
 
----
-
-### 🔍 Run a Search
-
-```bash
-zig build run -- "bind zig library" ./database.json
-```
-
 **Example Output:**
 
 ```
