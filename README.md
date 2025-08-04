@@ -151,8 +151,8 @@ pub fn main() !void {
     defer results.deinit();
 
     for (results.items, 0..) |result, i| {
-        const title = result.doc.get("title") orelse .{ .string = "" };
-        const desc = result.doc.get("description") orelse .{ .string = "" };
+        const title:std.json.Value = result.doc.get("title") orelse .{ .string = "" };
+        const desc:std.json.Value = result.doc.get("description") orelse .{ .string = "" };
         std.debug.print("{d}. [{d:3}] {s}\n", .{ i + 1, result.score, title.string });
         std.debug.print("     {s}\n\n", .{desc.string});
     }
