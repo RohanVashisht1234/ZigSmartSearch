@@ -159,6 +159,8 @@ pub fn main() !void {
 }
 ```
 
+For testing, you can download [database.json](./example/database.json) inside your src folder.
+
 ---
 
 ### 🔍 Run a Search
