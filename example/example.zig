@@ -1,4 +1,4 @@
-const ZigSmartSearch = @import("../ZigSmartSearch.zig").ZigSmartSearch;
+const ZigSmartSearch = @import("../src/ZigSmartSearch.zig").ZigSmartSearch;
 const std = @import("std");
 const database = @embedFile("database.json");
 
