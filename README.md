@@ -1,6 +1,6 @@
 # 🔍 ZigSmartSearch: High-Speed Semantic Search in Zig
 
-**ZigSmartSearch** is a blazing-fast semantic search library written in **Zig**, built for concept-based searching across JSON datasets. Instead of relying on exact string matching, it expands queries using lemmatization and a dictionary of weighted synonyms—ideal for document repositories like Zigistry with rich README content.
+**ZigSmartSearch** is a blazing-fast semantic search library written in **Zig**, built for concept-based searching across JSON datasets. Instead of relying on exact string matching, it expands queries using lemmatization and a dictionary of weighted synonyms—ideal for document repositories with rich content.
 
 > ⭐️ Star the repo to support the project!
 
@@ -196,7 +196,7 @@ Document title: Zig Clib, score: 152, matched: [bind, library, connect, zig]
 * ✅ Semantic search for documentation, packages, READMEs.
 * ✅ Lightweight offline alternative to vector search.
 * ✅ Prototyping NLP pipelines in Zig.
-* ✅ Ideal for tools like Zigistry and domain-specific datasets.
+* ✅ Ideal for domain-specific datasets.
 
 ---
 
