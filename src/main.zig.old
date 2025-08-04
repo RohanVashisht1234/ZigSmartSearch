@@ -1,0 +1,300 @@
+const std = @import("std");
+const json = std.json;
+const simplified = @import("libs/simplifiedDictionary.zig");
+const lemmatizer = @import("libs/lemmatizeWordMap.zig");
+const NON_EMPHASIS_WORDS = @import("libs/nonEmphasisWords.zig").NON_EMPHASIS_WORDS;
+
+const Allocator = std.mem.Allocator;
+
+fn isNonEmphasis(word: []const u8) bool {
+    for (NON_EMPHASIS_WORDS) |w| {
+        if (std.mem.eql(u8, w, word)) return true;
+    }
+    return false;
+}
+
+// Improved preprocessing with better tokenization
+fn preprocess(allocator: Allocator, input: []const u8) !std.ArrayList([]const u8) {
+    var words = std.ArrayList([]const u8).init(allocator);
+    errdefer {
+        for (words.items) |w| allocator.free(w);
+        words.deinit();
+    }
+
+    const lower = try std.ascii.allocLowerString(allocator, input);
+    defer allocator.free(lower);
+
+    // Replace multiple delimiters with space
+    var cleaned = try allocator.alloc(u8, lower.len);
+    defer allocator.free(cleaned);
+    for (lower, 0..) |c, i| {
+        cleaned[i] = if (std.ascii.isAlphanumeric(c) or c == ' ' or c == '-') c else ' ';
+    }
+
+    // Split on multiple delimiters
+    var it = std.mem.tokenizeAny(u8, cleaned, " \t\n-");
+    while (it.next()) |w| {
+        if (w.len > 2 and !isNonEmphasis(w)) { // Ignore very short words
+            const copy = try allocator.dupe(u8, w);
+            try words.append(copy);
+        }
+    }
+    return words;
+}
+
+// Improved word expansion with limits and weights
+fn expandWords(
+    allocator: Allocator,
+    original: []const []const u8,
+    dict: *const std.StringHashMap([]const u8),
+    lemma: *const std.StringHashMap([]const u8),
+) !std.StringHashMap(u8) { // Changed to store weights
+    var expanded = std.StringHashMap(u8).init(allocator);
+    errdefer expanded.deinit();
+
+    for (original) |w| {
+        try expanded.put(w, 10); // Base weight for original words
+        if (lemma.get(w)) |base| {
+            try expanded.put(base, 8); // Slightly lower weight for lemmatized form
+        }
+        if (dict.get(w)) |exp| {
+            var count: u8 = 0;
+            var it = std.mem.tokenizeScalar(u8, exp, ' ');
+            while (it.next()) |e| {
+                if (count >= 3) break; // Limit expansions to reduce noise
+                try expanded.put(e, 5); // Lower weight for dictionary expansions
+                if (lemma.get(e)) |base2| {
+                    try expanded.put(base2, 4);
+                }
+                count += 1;
+            }
+        }
+    }
+    return expanded;
+}
+
+// Improved scoring with word boundaries and proximity
+fn calculateScore(
+    allocator: Allocator,
+    doc: json.ObjectMap,
+    original: []const []const u8,
+    expanded: std.StringHashMap(u8), // Now uses weights
+) !u32 {
+    var score: u32 = 0;
+    var matched = std.StringHashMap(void).init(allocator);
+    defer matched.deinit();
+
+    const name: json.Value = doc.get("title") orelse .{ .string = "" };
+    const desc: json.Value = doc.get("description") orelse .{ .string = "" };
+    const content: json.Value = doc.get("content") orelse .{ .string = "" };
+
+    const title_lower = try std.ascii.allocLowerString(allocator, name.string);
+    defer allocator.free(title_lower);
+    const desc_lower = try std.ascii.allocLowerString(allocator, desc.string);
+    defer allocator.free(desc_lower);
+    const content_lower = try std.ascii.allocLowerString(allocator, content.string);
+    defer allocator.free(content_lower);
+
+    // Word boundary check function
+    const wordBoundary = struct {
+        fn containsWord(haystack: []const u8, needle: []const u8) bool {
+            var i: usize = 0;
+            while (std.mem.indexOfPos(u8, haystack, i, needle)) |pos| {
+                const is_start = pos == 0 or !std.ascii.isAlphanumeric(haystack[pos - 1]);
+                const is_end = pos + needle.len == haystack.len or !std.ascii.isAlphanumeric(haystack[pos + needle.len]);
+                if (is_start and is_end) return true;
+                i = pos + 1;
+            }
+            return false;
+        }
+    }.containsWord;
+
+    // Check for phrase match with proximity bonus
+    if (original.len > 1) {
+        const joined = try std.mem.join(allocator, " ", original);
+        defer allocator.free(joined);
+        if (std.mem.indexOf(u8, title_lower, joined) != null) score += 90 else if (std.mem.indexOf(u8, desc_lower, joined) != null) score += 80 else if (std.mem.indexOf(u8, content_lower, joined) != null) score += 70;
+
+        // Proximity bonus: check if original words appear close together
+        const full_text = try std.fmt.allocPrint(allocator, "{s} {s} {s}", .{ title_lower, desc_lower, content_lower });
+        defer allocator.free(full_text);
+        var positions = std.ArrayList(usize).init(allocator);
+        defer positions.deinit();
+        for (original) |word| {
+            var i: usize = 0;
+            while (std.mem.indexOfPos(u8, full_text, i, word)) |pos| {
+                try positions.append(pos);
+                i = pos + 1;
+            }
+        }
+        if (positions.items.len >= 2) {
+            std.mem.sortUnstable(usize, positions.items, {}, struct {
+                fn lessThan(_: void, a: usize, b: usize) bool {
+                    return a < b;
+                }
+            }.lessThan);
+            var max_gap: usize = 0;
+            for (1..positions.items.len) |i| {
+                const gap = positions.items[i] - positions.items[i - 1];
+                max_gap = @max(max_gap, gap);
+            }
+            if (max_gap < 50) score += @min(20, 50 - max_gap); // Bonus for close proximity
+        }
+    }
+
+    // Score original words
+    for (original) |word| {
+        if (matched.contains(word)) continue;
+        if (wordBoundary(title_lower, word)) score += 70 else if (wordBoundary(desc_lower, word)) score += 60 else if (wordBoundary(content_lower, word)) score += 50;
+        try matched.put(word, {});
+    }
+
+    // Score expanded words with weights
+    var it = expanded.iterator();
+    while (it.next()) |entry| {
+        const word = entry.key_ptr.*;
+        const weight = entry.value_ptr.*;
+        if (matched.contains(word)) continue;
+        if (wordBoundary(title_lower, word)) score += 10 * weight else if (wordBoundary(desc_lower, word)) score += 7 * weight else if (wordBoundary(content_lower, word)) score += 5 * weight;
+        try matched.put(word, {});
+    }
+
+    // Normalize score by document length (simple approach)
+    const doc_length = title_lower.len + desc_lower.len + content_lower.len;
+    if (doc_length > 0) {
+        score = @intFromFloat(@as(f32, @floatFromInt(score)) / @log10(@as(f32, @floatFromInt(doc_length))));
+    }
+
+    // Debugging: Log matched words
+    if (score > 0) {
+        const display_title: json.Value = doc.get("title") orelse .{ .string = "N/A" };
+        var matched_words = std.ArrayList([]const u8).init(allocator);
+        defer matched_words.deinit();
+        var matched_it = matched.iterator();
+        while (matched_it.next()) |entry| {
+            try matched_words.append(entry.key_ptr.*);
+        }
+        std.debug.print("Document title: {s}, score: {d}, matched: {s}\n", .{
+            display_title.string,
+            score,
+            matched_words.items,
+        });
+    }
+
+    return score;
+}
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) @panic("TEST FAIL");
+    }
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    if (args.len != 3) {
+        try std.io.getStdErr().writer().print("Usage: zig run main.zig -- \"query here\" ./database.json\n", .{});
+        return error.InvalidArguments;
+    }
+
+    const query = args[1];
+    const db_path = args[2];
+
+    var dict = simplified.loadSimplifiedDictionary(allocator) catch |e| {
+        try std.io.getStdErr().writer().print("Warning: Could not load dictionary: {}\n", .{e});
+        @panic("Not working");
+    };
+    defer dict.deinit();
+
+    var lemma = lemmatizer.buildLemmatizeMap(allocator) catch |e| {
+        try std.io.getStdErr().writer().print("Warning: lemmatizer not loaded: {}\n", .{e});
+        @panic("Not working");
+    };
+    defer lemma.deinit();
+
+    var db_file = std.fs.cwd().openFile(db_path, .{}) catch |e| {
+        try std.io.getStdErr().writer().print("Error reading database: {}\n", .{e});
+        return error.DatabaseLoadFailed;
+    };
+    defer db_file.close();
+
+    const db_content = try db_file.readToEndAlloc(allocator, 1 << 24);
+    defer allocator.free(db_content);
+
+    const parsed = json.parseFromSlice([]json.Value, allocator, db_content, .{ .ignore_unknown_fields = true }) catch |e| {
+        try std.io.getStdErr().writer().print("Error parsing database: {}\n", .{e});
+        return error.DatabaseParseFailed;
+    };
+    defer parsed.deinit();
+
+    std.debug.print("Parsed {d} documents\n", .{parsed.value.len});
+
+    var original_words = try preprocess(allocator, query);
+    defer {
+        for (original_words.items) |w| allocator.free(w);
+        original_words.deinit();
+    }
+    var expanded_words = try expandWords(allocator, original_words.items, &dict, &lemma);
+    defer expanded_words.deinit();
+
+    var expanded_list = std.ArrayList([]const u8).init(allocator);
+    defer {
+        for (expanded_list.items) |w| allocator.free(w);
+        expanded_list.deinit();
+    }
+    var it = expanded_words.iterator();
+    while (it.next()) |entry| {
+        try expanded_list.append(try allocator.dupe(u8, entry.key_ptr.*));
+    }
+    std.mem.sortUnstable([]const u8, expanded_list.items, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Query:     {s}\n", .{query});
+    try stdout.print("Processed: {s}\n", .{original_words.items});
+    try stdout.print("Expanded:  {s}{s}\n", .{
+        expanded_list.items[0..@min(20, expanded_list.items.len)],
+        if (expanded_list.items.len > 20) "..." else "",
+    });
+    try stdout.print("{s}\n", .{"-" ** 60});
+
+    const x = struct { doc: json.ObjectMap, score: u32 };
+    var results = std.ArrayList(x).init(allocator);
+    defer results.deinit();
+
+    for (parsed.value) |v| {
+        const doc = v.object;
+        const score = try calculateScore(allocator, doc, original_words.items, expanded_words);
+        if (score > 0) try results.append(.{ .doc = doc, .score = score });
+    }
+
+    if (results.items.len == 0) {
+        try stdout.print("No matches found.\n", .{});
+        return;
+    }
+
+    std.mem.sortUnstable(
+        x,
+        results.items,
+        {},
+        struct {
+            fn lessThan(_: void, a: x, b: x) bool {
+                return a.score > b.score;
+            }
+        }.lessThan,
+    );
+
+    try stdout.print("Top {d} matches:\n\n", .{@min(10, results.items.len)});
+    for (results.items[0..@min(10, results.items.len)], 0..) |entry, i| {
+        const title: json.Value = entry.doc.get("title") orelse .{ .string = "N/A" };
+        const desc: json.Value = entry.doc.get("description") orelse .{ .string = "" };
+        try stdout.print("{d}. [{d:3}] {s}\n", .{ i + 1, entry.score, title.string });
+        try stdout.print("     {s}\n\n", .{desc.string});
+    }
+}
